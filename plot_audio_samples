@@ -1,0 +1,251 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+log() {
+    echo "$(date +%T) $(basename "${0}"): ${1:-log() argument missing}"
+}
+log_err() {
+    log "${1:-log_err() argument missing}" >&2
+}
+die() {
+    log_err "${1-die() argument missing}"
+    exit 1
+}
+die_usage() {
+    log_err "${1-die() argument missing}"
+    usage
+    exit 1
+}
+
+declare -ra required_cmds=(tr cut soxi sox hexdump sed gnuplot)
+for cmd in "${required_cmds[@]}"; do
+    if ! which "${cmd}" >/dev/null 2>&1; then
+        log "Required tools: ${required_cmds[*]}"
+        die "Required tool not found: ${cmd}"
+    fi
+done
+
+
+
+input_file=""
+output_file=""
+start_pos="0"
+length="50"
+title=""
+size="medium"
+force="no"
+gp_commands="no"
+usage() {
+    cat << EOF
+Usage:
+  $(basename "${0}") -i INPUT_FILE [optional arguments]
+
+  Required:
+    -i | --input INPUT_FILE     - input file
+
+  Optional:
+    -o | --output OUTPUT_FILE   - output file (default is same as input with the
+                                  extension changed to "png")
+    -f | --force                - force overwrite output file
+    --gp-commands               - don't invoke gnuplot, just print gnuplot
+                                  commands to stdout
+
+    -s | --start START_POS      - start position in samples     (default: ${start_pos})
+    -l | --length LENGTH        - length in samples             (default: ${length})
+    -t | --title TITLE          - title
+    --size SIZE                 - size of the graph (default is ${size})
+
+    -h | --help                 - this help message
+
+Plot the samples and upsampled waveform of the first channel from the input file.
+
+The input file is upsampled 8x to obtain data for the waveform.
+
+SIZE can be either a keyword or an actual size in format WIDTHxHEIGHT. Possible
+keywords and corresponding sizes:
+  small:        800x400
+  medium:       1200x600
+  large | big:  1600x800
+EOF
+}
+while [ -n "${1-}" ]; do
+    case "${1}" in
+        -i|--input| \
+        -s|--start| \
+        -l|--length| \
+        -t|--title| \
+        --size| \
+        -o|--output)
+            if [ ! $# -ge 2 ]; then
+                die_usage "Argument missing for option ${1}"
+            fi
+        ;;
+    esac
+    case "${1}" in
+        -i|--input)
+            input_file="${2}"
+            shift
+        ;;
+        -o|--output)
+            output_file="${2}"
+            shift
+        ;;
+        -s|--start)
+            start_pos="${2}"
+            shift
+        ;;
+        -l|--length)
+            length="${2}"
+            shift
+        ;;
+        -t|--title)
+            title="${2}"
+            shift
+        ;;
+        -f|--force)
+            force="yes"
+        ;;
+        --size)
+            size="${2}"
+            shift
+        ;;
+        --gp-commands)
+            gp_commands="yes"
+        ;;
+        -h|--help)
+            usage
+            exit 0
+        ;;
+        *)
+            die_usage "Unrecognized command line argument: ${1}"
+        ;;
+    esac
+    shift
+done
+
+if [ -z "${input_file}" ]; then
+    die_usage "Input file is required."
+fi
+if [ ! -f "${input_file}" ]; then
+    die "File ${input_file} doesn't exist."
+fi
+if [ -z "${output_file}" ]; then
+    output_file="${input_file%.*}.png"
+fi
+if [ -f "${output_file}" ] && [ "${force}" != "yes" ]; then
+    die "File ${output_file} already exists. Use -f | --force to overwrite."
+fi
+if ! [[ "${start_pos}" =~ ^[0-9]+$ ]]; then
+    die_usage "Invalid start position: ${start_pos}"
+fi
+if ! [[ "${length}" =~ ^[0-9]+$ ]]; then
+    die_usage "Invalid length: ${length}"
+fi
+
+size="$(echo "${size}" | tr "[:upper:]" "[:lower:]")"
+
+declare -i width=0
+declare -i height=0
+case "${size}" in
+    small)
+        width=800
+        height=400
+    ;;
+    medium)
+        width=1200
+        height=600
+    ;;
+    large|big)
+        width=1600
+        height=800
+    ;;
+esac
+
+if [ "${width}" -eq 0 ]; then
+    size_regex="^[0-9]+x[0-9]+$"
+    if [[ "${size}" =~ ${size_regex} ]]; then
+        width="$(echo "${size}" | cut -d'x' -f1)"
+        height="$(echo "${size}" | cut -d'x' -f2)"
+    else
+        die_usage "Wrong size format: ${size}"
+    fi
+fi
+
+
+
+tmp_dir=$(mktemp -d)
+trap 'rm -rf "${tmp_dir}"' EXIT
+
+input_fs="$(soxi -r "${input_file}")"
+
+wav="${tmp_dir}/input.wav"
+wav_upsample="${tmp_dir}/input_upsample.wav"
+
+sox "${input_file}" -b32 "${wav}" remix 1 trim "${start_pos}"s "${length}"s
+# reduce volume to avoid potential clipping
+sox "${input_file}" -b32 "${wav_upsample}" remix 1 vol 0.5 rate -s "$((8 * input_fs))" trim "$((8 * start_pos))"s "$((8 * length))"s
+
+samples="${tmp_dir}/samples.dat"
+samples_upsample="${tmp_dir}/samples_upsample.dat"
+
+n=-1; while read -r line; do n=$((n+1)); echo -e "$n\t$line"; done < <(hexdump -s80 -v -e '1/4 "%d\n"' "${wav}") > "${samples}"
+n=-1; while read -r line; do n=$((n+1)); echo -e "$n\t$line"; done < <(hexdump -s80 -v -e '1/4 "%d\n"' "${wav_upsample}") > "${samples_upsample}"
+
+png="${tmp_dir}/output.png"
+gnuplot_i="${tmp_dir}/out.gp"
+cat >"${gnuplot_i}" <<'EOF'
+reset
+set terminal pngcairo truecolor size OUTPUT_SIZE
+set output "OUTPUT"
+
+# remove border on top and right and set color to gray
+set style line 11 lc rgb 'black' lt 1
+set border 3 back ls 11
+set tics nomirror
+
+# define grid
+set style line 12 lc rgb '#303030' lt 0 lw 1
+set grid back ls 12
+
+set label "TITLE" at graph 0.5, graph 1
+
+set xlabel "sample nr"
+set ylabel "sample value"
+set xzeroaxis lt -1
+
+# horizontal lines at +/- 1.0
+set arrow from graph 0, first 1 to graph 1, first 1 nohead linetype rgb 'gray60'
+set arrow from graph 0, first -1 to graph 1, first -1 nohead linetype rgb 'gray60'
+
+set yrange [-1.2:1.2]
+set xrange [0:LENGTH]
+
+maxf=2**31-1
+
+# WAVE is multiplied by 2 to make up for volume reduction during upsampling
+plot \
+ "WAVE" using ($1/8):($2 / maxf * 2) with lines notitle linetype rgb '#a00576ff' lw 2, \
+ "POINTS" using 1:($2 / maxf) with impulses notitle linetype rgb '#0576ff', \
+ "POINTS" using 1:($2 / maxf) with points title "samples" linetype rgb '#0576ff' pt 7 ps 0.4
+EOF
+
+sed -i \
+    -e "s/OUTPUT_SIZE/${width}, ${height}/" \
+    -e "s|OUTPUT|${png}|" \
+    -e "s|WAVE|${samples_upsample}|" \
+    -e "s|POINTS|${samples}|" \
+    -e "s/LENGTH/${length}/" \
+    "${gnuplot_i}"
+if [ -z "${title}" ]; then
+    sed -i '/TITLE/ d' "${gnuplot_i}"
+else
+    sed -i "s/TITLE/${title}/" "${gnuplot_i}"
+fi
+
+if [ "${gp_commands}" = "yes" ]; then
+    cat "${gnuplot_i}"
+    exit 0
+fi
+
+gnuplot "${gnuplot_i}"
+cp "${png}" "${output_file}"
