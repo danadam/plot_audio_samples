@@ -1,3 +1,12 @@
+**Table of Contents**
+
+<div id="user-content-toc">
+
+* [Intro](#intro)
+* [Command line options](#command-line-options)
+
+</div>
+
 # Intro
 
 A script that generates and executes gnuplot commands for plotting audio samples.
