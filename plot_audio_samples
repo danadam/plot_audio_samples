@@ -176,14 +176,14 @@ fi
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "${tmp_dir}"' EXIT
 
-input_fs="$(soxi -r "${input_file}")"
+input_sr="$(soxi -r "${input_file}")"
 
 wav="${tmp_dir}/input.wav"
 wav_upsample="${tmp_dir}/input_upsample.wav"
 
 sox "${input_file}" -b32 "${wav}" remix 1 trim "${start_pos}"s "${length}"s
 # reduce volume to avoid potential clipping
-sox "${input_file}" -b32 "${wav_upsample}" remix 1 vol 0.5 rate -s "$((8 * input_fs))" trim "$((8 * start_pos))"s "$((8 * length))"s
+sox "${input_file}" -b32 "${wav_upsample}" remix 1 vol 0.5 rate -s "$((8 * input_sr))" trim "$((8 * start_pos))"s "$((8 * length))"s
 
 samples="${tmp_dir}/samples.dat"
 samples_upsample="${tmp_dir}/samples_upsample.dat"
