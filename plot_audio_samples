@@ -35,6 +35,7 @@ title=""
 size="medium"
 force="no"
 gp_commands="no"
+with_stems="no"
 usage() {
     cat << EOF
 Usage:
@@ -54,6 +55,7 @@ Usage:
     -l | --length LENGTH        - length in samples             (default: ${length})
     -t | --title TITLE          - title
     --size SIZE                 - size of the graph (default is ${size})
+    --with-stems                - plot vertical stems for each sample
 
     -h | --help                 - this help message
 
@@ -108,6 +110,9 @@ while [ -n "${1-}" ]; do
         --size)
             size="${2}"
             shift
+        ;;
+        --with-stems)
+            with_stems="yes"
         ;;
         --gp-commands)
             gp_commands="yes"
@@ -245,6 +250,9 @@ if [ -z "${title}" ]; then
     sed -i '/TITLE/ d' "${gnuplot_i}"
 else
     sed -i "s/TITLE/${title}/" "${gnuplot_i}"
+fi
+if [ "${with_stems}" != "yes" ]; then
+    sed -i "/with impulses/ d" "${gnuplot_i}"
 fi
 
 if [ "${gp_commands}" = "yes" ]; then
