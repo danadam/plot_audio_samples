@@ -181,15 +181,22 @@ input_sr="$(soxi -r "${input_file}")"
 wav="${tmp_dir}/input.wav"
 wav_upsample="${tmp_dir}/input_upsample.wav"
 
-sox "${input_file}" -b32 "${wav}" remix 1 trim "${start_pos}"s "${length}"s
+sox "${input_file}" "${wav}" remix 1 trim "${start_pos}"s "${length}"s
 # reduce volume to avoid potential clipping
 sox "${input_file}" -b32 "${wav_upsample}" remix 1 vol 0.5 rate -s "$((8 * input_sr))" trim "$((8 * start_pos))"s "$((8 * length))"s
 
 samples="${tmp_dir}/samples.dat"
 samples_upsample="${tmp_dir}/samples_upsample.dat"
 
-n=-1; while read -r line; do n=$((n+1)); echo -e "$n\t$line"; done < <(hexdump -s80 -v -e '1/4 "%d\n"' "${wav}") > "${samples}"
-n=-1; while read -r line; do n=$((n+1)); echo -e "$n\t$line"; done < <(hexdump -s80 -v -e '1/4 "%d\n"' "${wav_upsample}") > "${samples_upsample}"
+# The "dat" format is:
+#   ; Sample Rate ...
+#   ; Channels ...
+#   time  ssample_value
+#   time  ssample_value
+#   ...
+# I use AWK to add sample_number (starting from 0) as the first column
+sox "${wav}"          -t dat - | awk 'NR > 2 { print NR - 3, $0 }' > "${samples}"
+sox "${wav_upsample}" -t dat - | awk 'NR > 2 { print NR - 3, $0 }' > "${samples_upsample}"
 
 png="${tmp_dir}/output.png"
 gnuplot_i="${tmp_dir}/out.gp"
@@ -220,13 +227,11 @@ set arrow from graph 0, first -1 to graph 1, first -1 nohead linetype rgb 'gray6
 set yrange [-1.2:1.2]
 set xrange [0:LENGTH]
 
-maxf=2**31-1
-
 # WAVE is multiplied by 2 to make up for volume reduction during upsampling
 plot \
- "WAVE" using ($1/8):($2 / maxf * 2) with lines notitle linetype rgb '#a00576ff' lw 2, \
- "POINTS" using 1:($2 / maxf) with impulses notitle linetype rgb '#0576ff', \
- "POINTS" using 1:($2 / maxf) with points title "samples" linetype rgb '#0576ff' pt 7 ps 0.4
+ "WAVE" using ($1/8):($3 * 2) with lines notitle linetype rgb '#a00576ff' lw 2, \
+ "POINTS" using 1:3 with impulses notitle linetype rgb '#0576ff', \
+ "POINTS" using 1:3 with points title "samples" linetype rgb '#0576ff' pt 7 ps 0.4
 EOF
 
 sed -i \
