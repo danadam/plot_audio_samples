@@ -16,8 +16,11 @@ die_usage() {
     usage
     exit 1
 }
+bcdo() {
+    echo "${@}" | bc -l
+}
 
-declare -ra required_cmds=(tr cut soxi sox hexdump sed gnuplot)
+declare -ra required_cmds=(tr cut soxi sox hexdump sed gnuplot bc)
 for cmd in "${required_cmds[@]}"; do
     if ! which "${cmd}" >/dev/null 2>&1; then
         log "Required tools: ${required_cmds[*]}"
@@ -36,6 +39,7 @@ size="medium"
 force="no"
 gp_commands="no"
 with_stems="no"
+plot_time=""
 usage() {
     cat << EOF
 Usage:
@@ -56,6 +60,7 @@ Usage:
     -t | --title TITLE          - title
     --size SIZE                 - size of the graph (default is ${size})
     --with-stems                - plot vertical stems for each sample
+    --plot-time u|m             - plot time on X axis, in micro- or milliseconds
 
     -h | --help                 - this help message
 
@@ -77,6 +82,7 @@ while [ -n "${1-}" ]; do
         -l|--length| \
         -t|--title| \
         --size| \
+        --plot-time| \
         -o|--output)
             if [ ! $# -ge 2 ]; then
                 die_usage "Argument missing for option ${1}"
@@ -113,6 +119,10 @@ while [ -n "${1-}" ]; do
         ;;
         --with-stems)
             with_stems="yes"
+        ;;
+        --plot-time)
+            plot_time="${2}"
+            shift
         ;;
         --gp-commands)
             gp_commands="yes"
@@ -176,6 +186,12 @@ if [ "${width}" -eq 0 ]; then
     fi
 fi
 
+if [ -n "${plot_time}" ]; then
+    if [[ ! "${plot_time}" =~ ^[um]$ ]]; then
+        die_usage "Wrong argument for --plot-time: ${plot_time}"
+    fi
+fi
+
 
 
 tmp_dir=$(mktemp -d)
@@ -222,7 +238,7 @@ set grid mytics ls 12
 
 set label "TITLE" at graph 0.01, graph 1
 
-set xlabel "sample nr"
+set xlabel "X_LABEL"
 set ylabel "sample value"
 set xzeroaxis lt -1
 
@@ -237,9 +253,9 @@ set mytics 5
 
 # WAVE is multiplied by 2 to make up for volume reduction during upsampling
 plot \
- "WAVE" using ($1/8):($3 * 2) with lines notitle linetype rgb '#c00576ff' lw 2, \
- "POINTS" using 1:3 with impulses notitle linetype rgb '#0576ff', \
- "POINTS" using 1:3 with points title "samples" linetype rgb '#0576ff' pt 7 ps 0.6
+ "WAVE" using X_ARG_WAVE:($3 * 2) with lines notitle linetype rgb '#c00576ff' lw 2, \
+ "POINTS" using X_ARG_POINTS:3 with impulses notitle linetype rgb '#0576ff', \
+ "POINTS" using X_ARG_POINTS:3 with points title "samples" linetype rgb '#0576ff' pt 7 ps 0.6
 EOF
 
 sed -i \
@@ -247,15 +263,41 @@ sed -i \
     -e "s|OUTPUT|${png}|" \
     -e "s|WAVE|${samples_upsample}|" \
     -e "s|POINTS|${samples}|" \
-    -e "s/LENGTH/${length}/" \
     "${gnuplot_i}"
+
 if [ -z "${title}" ]; then
     sed -i '/TITLE/ d' "${gnuplot_i}"
 else
     sed -i "s/TITLE/${title}/" "${gnuplot_i}"
 fi
+
 if [ "${with_stems}" != "yes" ]; then
     sed -i "/with impulses/ d" "${gnuplot_i}"
+fi
+
+if [ -z "${plot_time}" ]; then
+    sed -i \
+        -e "s/LENGTH/${length}/" \
+        -e 's/X_LABEL/sample nr/' \
+        -e 's/X_ARG_WAVE/($1 \/ 8)/' \
+        -e 's/X_ARG_POINTS/1/' \
+        "${gnuplot_i}"
+else
+    if [ "${plot_time}" = "u" ]; then
+        sed -i \
+            -e "s/LENGTH/$(bcdo "1000000 * ${length} / ${input_sr}")/" \
+            -e 's/X_LABEL/time [µs]/' \
+            -e 's/X_ARG_WAVE/(1000000 * $2)/' \
+            -e 's/X_ARG_POINTS/(1000000 * $2)/' \
+            "${gnuplot_i}"
+    elif [ "${plot_time}" = "m" ]; then
+        sed -i \
+            -e "s/LENGTH/$(bcdo "1000 * ${length} / ${input_sr}")/" \
+            -e 's/X_LABEL/time [ms]/' \
+            -e 's/X_ARG_WAVE/(1000 * $2)/' \
+            -e 's/X_ARG_POINTS/(1000 * $2)/' \
+            "${gnuplot_i}"
+    fi
 fi
 
 if [ "${gp_commands}" = "yes" ]; then
