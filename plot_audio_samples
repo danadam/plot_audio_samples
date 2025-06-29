@@ -237,7 +237,7 @@ set mytics 5
 
 # WAVE is multiplied by 2 to make up for volume reduction during upsampling
 plot \
- "WAVE" using ($1/8):($3 * 2) with lines notitle linetype rgb '#a00576ff' lw 2, \
+ "WAVE" using ($1/8):($3 * 2) with lines notitle linetype rgb '#c00576ff' lw 2, \
  "POINTS" using 1:3 with impulses notitle linetype rgb '#0576ff', \
  "POINTS" using 1:3 with points title "samples" linetype rgb '#0576ff' pt 7 ps 0.6
 EOF
